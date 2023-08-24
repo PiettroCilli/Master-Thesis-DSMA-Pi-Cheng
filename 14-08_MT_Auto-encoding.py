@@ -1,14 +1,12 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras import layers, models, regularizers, optimizers
-from tensorflow.keras.layers import Input, Dense, Layer, InputSpec
+from tensorflow.keras import regularizers, optimizers, backend as K, callbacks
 from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras import backend as K
-from tensorflow.keras.callbacks import EarlyStopping
-import matplotlib.pyplot as plt
-from keras.utils import plot_model
+from tensorflow.keras.layers import Dense, Layer, InputSpec
+from tensorflow.keras.utils import plot_model
 
 #Import data
 data = pd.read_csv("C:/Users/Administrator/Documents/Msc Data Science & Marketing Analytics/Master thesis/Data sets/Merged Instacart/data_small_one-hot.csv")
@@ -18,8 +16,7 @@ scaler = MinMaxScaler()
 columns_to_normalize = ["avg_days_since_prior_order", "u_reordered_ratio", "u_total_orders", "order_size_avg"]
 data[columns_to_normalize] = scaler.fit_transform(data[columns_to_normalize])
 del columns_to_normalize, scaler
-data = data.drop('user_id', axis=1)
-#data = data.iloc[:, 4:]
+data = data.iloc[:, 5:]
 
 
 #Setting up neural network architecture, including specifying the amount of latent dimensions
@@ -35,7 +32,7 @@ autoencoder = Sequential([
 #Specify what loss function to use and train the model
 autoencoder.compile(optimizer='adam', loss='mse')
 save_dir = './results'
-early_stopping = EarlyStopping(monitor='val_loss', patience=10, mode='min', restore_best_weights=True)
+early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min', restore_best_weights=True)
 autoencoder.fit(data, data, epochs=200, batch_size=round(data.shape[0]/10), verbose=0, validation_split=0.1, callbacks=[early_stopping])  
 
 #Save weights and load weights
@@ -126,7 +123,6 @@ model.compile(optimizer=optimizers.SGD(0.01, 0), loss='kld')
 
 #Plot architecture of the model so far (from input to latent layer to clusters)
 plot_model(model, to_file='model.png', show_shapes=True)
-
 
 #Step 1: Initialize cluster centers using k-means
 kmeans = KMeans(n_clusters=n_clusters, n_init=3)
