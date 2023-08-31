@@ -6,11 +6,11 @@ import gc
 data = pd.read_csv("./data_big_transformed.csv")
 
 #Setting display options
-pd.set_option("display.max_rows", None)
-pd.set_option("display.max_columns", None)
+pd.set_option("display.max_rows", 20)
+pd.set_option("display.max_columns", 20)
 
 #Take a subset of full merged data
-data1 = data.loc[data.user_id.isin(data.user_id.drop_duplicates().sample(frac=0.5, random_state=16))] 
+data1 = data.loc[data.user_id.isin(data.user_id.drop_duplicates().sample(frac=0.25, random_state=16))] 
 data = data1
 del data1
 gc.collect()
