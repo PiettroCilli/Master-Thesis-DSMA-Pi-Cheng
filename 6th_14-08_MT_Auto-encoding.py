@@ -1,3 +1,4 @@
+#Import modules 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -7,46 +8,52 @@ from tensorflow.keras import regularizers, optimizers, backend as K, callbacks
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.layers import Dense, Layer, InputSpec
 from tensorflow.keras.utils import plot_model
+import tensorflow as tf
 
-#Import data
-data = pd.read_csv("C:/Users/Administrator/Documents/Msc Data Science & Marketing Analytics/Master thesis/Data sets/Merged Instacart/data_small_one-hot.csv")
-
-#Standardize variables and remove unwanted variables
-scaler = MinMaxScaler()
-columns_to_normalize = ["avg_days_since_prior_order", "u_reordered_ratio", "u_total_orders", "order_size_avg"]
-data[columns_to_normalize] = scaler.fit_transform(data[columns_to_normalize])
-del columns_to_normalize, scaler
+#Load data
+data = pd.read_csv('/content/drive/MyDrive/Merged Instacart/data_half_one-hot.csv')
 data = data.iloc[:, 5:]
 
 
 #Setting up neural network architecture, including specifying the amount of latent dimensions
 input_dim = data.shape[1]
 autoencoder = Sequential([
-    Dense(int(input_dim), activation='sigmoid', activity_regularizer=regularizers.l1(1e-5),
+    Dense(int(input_dim), activation='sigmoid', activity_regularizer=regularizers.l1(1e-7),
           name='encoder'),
-    Dense(15, activation='sigmoid', activity_regularizer=regularizers.l1(1e-5), 
+    Dense(150, activation='sigmoid', activity_regularizer=regularizers.l1(1e-7),
           name='latent_layer'),
     Dense(int(input_dim), activation='sigmoid', name = "decoder"),
 ])
 
 #Specify what loss function to use and train the model
 autoencoder.compile(optimizer='adam', loss='mse')
-save_dir = './results'
 early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min', restore_best_weights=True)
-autoencoder.fit(data, data, epochs=200, batch_size=round(data.shape[0]/10), verbose=0, validation_split=0.1, callbacks=[early_stopping])  
+history = autoencoder.fit(data, data, epochs=200, batch_size=256, verbose=1, validation_split=0.2, callbacks=[early_stopping])
+train_mse = history.history['loss'][-1]  # Last training MSE
+val_mse = history.history['val_loss'][-1]  # Last validation MSE
+ld=150
+r=1e-06
+print(f"LD: {ld}, Reg: {r}, Train_mse: {train_mse}, Val_mse: {val_mse}")
 
-#Save weights and load weights
-autoencoder.save_weights(save_dir + '/ae_weights')
-autoencoder.load_weights(save_dir + '/ae_weights')
+#If you already have the weights saved, use this code to build the model
+#autoencoder.load_weights('/content/drive/MyDrive/Merged Instacart/models_final/ae_weights')
+#input_dim = data.shape[1]
+#autoencoder.build((None, input_dim))
+#autoencoder.summary()
+# get the latent layer
+#encoder = Model(inputs=autoencoder.input, outputs=autoencoder.get_layer('latent_layer').output)
+
+#Save the weights, load them etc.
+autoencoder.save_weights('/content/drive/MyDrive/Merged Instacart/models_final/ae_weights_1e-06')
+autoencoder.load_weights('/content/drive/MyDrive/Merged Instacart/models_final/ae_weights_1e-06')
 autoencoder.summary()
 
-# get the latent layer
+# get the latent layer & create some plots to confirm architecture
 encoder = Model(inputs=autoencoder.input, outputs=autoencoder.get_layer('latent_layer').output)
-
-#Plotting architecture of the auto-encoding network
+Plotting architecture of the auto-encoding network
 plot_model(autoencoder, to_file='autoencoder.png', show_shapes=True)
-plot_model(encoder, to_file='autoencoder.png', show_shapes=True)
-encoder.output
+plot_model(encoder, to_file='encoder.png', show_shapes=True)
+
 
 #Create the clustering layer
 class ClusteringLayer(Layer):
@@ -101,16 +108,16 @@ pred1.describe()
 
 #Elbow plot to choose the number of clusters to use in DEC
 scores_2 = []
-range_values = range(1, 10)
+range_values = range(1, 15)
 for i in range_values:
-  kmeans = KMeans(n_clusters= i)
+  kmeans = KMeans(n_clusters= i, n_init=10)
   kmeans.fit(pred)
   scores_2.append(kmeans.inertia_)
 plt.figure(figsize=(7,7))
 plt.plot(scores_2, 'bx-')
 plt.title('Elbow Method For Optimal Number of Clusters')
 plt.xlabel('Number of Clusters')
-plt.ylabel('Inertia') 
+plt.ylabel('Within cluster sum of squares')
 plt.show()
 
 #Building DEC model
@@ -119,51 +126,77 @@ clustering_layer = ClusteringLayer(n_clusters, name='clustering')(encoder.output
 model = Model(inputs=encoder.input, outputs=clustering_layer)
 
 #Use Kullback-Leibler divergence
-model.compile(optimizer=optimizers.SGD(0.01, 0), loss='kld')
-
-#Plot architecture of the model so far (from input to latent layer to clusters)
-plot_model(model, to_file='model.png', show_shapes=True)
+#model.compile(optimizer=optimizers.Adam(0.0001), loss='kld')
+model.compile(optimizer=optimizers.SGD(0.001, 0.9), loss='kld')
 
 #Step 1: Initialize cluster centers using k-means
-kmeans = KMeans(n_clusters=n_clusters, n_init=3)
+kmeans = KMeans(n_clusters=n_clusters, n_init=10)
 y_pred = kmeans.fit_predict(encoder.predict(data))
 model.get_layer(name='clustering').set_weights([kmeans.cluster_centers_])
 np.unique(y_pred, return_counts=True)
 
-#Step 2: 
+#Step 2:
 loss = 0
 index = 0
-maxiter = 2000
+maxiter = 10000
 update_interval = 100
 index_array = np.arange(data.shape[0])
-tol = 0.00001
+tol = 0.0001
+
 
 #Step 3: start training
+# Convert data to numpy for faster slicing
+data_np = data.values
+
+# Pre-allocate q array
+q = np.zeros((len(data_np), n_clusters))  # Assuming q has shape (data_length, n_clusters)
+
+# Step 3: start training
+batch_size = 256
 for ite in range(int(maxiter)):
     if ite % update_interval == 0:
-        q = model.predict(data, verbose=0)
+        # Optimized Predict in batches
+        for i in range(0, len(data_np), batch_size):
+            q[i:i+batch_size] = model.predict(data_np[i:i+batch_size], verbose=0)
+
         p = target_distribution(q)  # Update the auxiliary target distribution p
 
         # Evaluate the clustering performance
         y_pred_last = np.copy(y_pred)
         y_pred = q.argmax(1)
-        
-        # Check if reached tolerance threshold
+
+    # Check the tolerance threshold every 100 iterations
+    if ite % 100 == 0 and ite > 0:
         delta_label = np.sum(y_pred != y_pred_last).astype(np.float32) / y_pred.shape[0]
-        if ite > 0 and delta_label < tol:
+        if delta_label < tol:
             print('delta_label ', delta_label, '< tol ', tol)
             print('Reached tolerance threshold. Stopping training.')
             break
-    idx = index_array[index * round(data.shape[0]/10): min((index+1) * round(data.shape[0]/10), data.shape[0])]
-    loss = model.train_on_batch(x=data.iloc[idx], y=p[idx])
-    index = index + 1 if (index + 1) * round(data.shape[0]/10) <= data.shape[0] else 0
-model.save_weights(save_dir + '/DEC_model_final.h5')
-model.load_weights(save_dir + '/DEC_model_final.h5')
+
+    idx = index_array[index * batch_size: min((index+1) * batch_size, len(data_np))]
+    loss = model.train_on_batch(x=data_np[idx], y=p[idx])
+    index = index + 1 if (index + 1) * batch_size <= len(data_np) else 0
+
+    # Monitor Progress
+    if ite % 100 == 0:  # Print progress every 100 iterations
+        print(f"Iteration {ite}/{maxiter}, Loss: {loss:.5f}")
+
+#Save the model
+model.save('/content/drive/MyDrive/Merged Instacart/models_final/DEC_SGD0.001_1e-07.h5')
+loaded_model = tf.keras.models.load_model('/content/drive/MyDrive/Merged Instacart/models_final/DEC_SGD0.001_1e-07.h5', custom_objects={'ClusteringLayer': ClusteringLayer})
 
 #Look at the predicted clusters for each observation
 q = model.predict(data, verbose=0)
 p = target_distribution(q)  # update the auxiliary target distribution p
 y_pred = q.argmax(1)
-np.unique(y_pred, return_counts=True)
-np.mean(q, axis = 0)
-np.mean(p, axis = 0)
+print(np.unique(y_pred, return_counts=True))
+print(np.mean(q, axis = 0))
+print(np.mean(p, axis = 0))
+
+#Compute silhouette just to have a look
+from sklearn.metrics import silhouette_score
+data['cluster'] = y_pred
+
+#Silhouette
+silhouette_avg = silhouette_score(data, y_pred)
+print("The average silhouette_score is :", silhouette_avg)
