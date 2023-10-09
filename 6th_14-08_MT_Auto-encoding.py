@@ -127,7 +127,7 @@ model = Model(inputs=encoder.input, outputs=clustering_layer)
 
 #Use Kullback-Leibler divergence
 #model.compile(optimizer=optimizers.Adam(0.0001), loss='kld')
-model.compile(optimizer=optimizers.SGD(0.001, 0.9), loss='kld')
+model.compile(optimizer=optimizers.SGD(0.0001, 0.1), loss='kld')
 
 #Step 1: Initialize cluster centers using k-means
 kmeans = KMeans(n_clusters=n_clusters, n_init=10)
@@ -138,13 +138,13 @@ np.unique(y_pred, return_counts=True)
 #Step 2:
 loss = 0
 index = 0
-maxiter = 10000
-update_interval = 100
+maxiter = 5000
+update_interval = 25
 index_array = np.arange(data.shape[0])
-tol = 0.0001
+tol = 0.00004
 
 
-#Step 3: start training
+
 # Convert data to numpy for faster slicing
 data_np = data.values
 
@@ -157,7 +157,7 @@ for ite in range(int(maxiter)):
     if ite % update_interval == 0:
         # Optimized Predict in batches
         for i in range(0, len(data_np), batch_size):
-            q[i:i+batch_size] = model.predict(data_np[i:i+batch_size], verbose=0)
+          q[i:i+batch_size] = model.predict(data_np[i:i+batch_size], verbose=0)
 
         p = target_distribution(q)  # Update the auxiliary target distribution p
 
@@ -180,7 +180,6 @@ for ite in range(int(maxiter)):
     # Monitor Progress
     if ite % 100 == 0:  # Print progress every 100 iterations
         print(f"Iteration {ite}/{maxiter}, Loss: {loss:.5f}")
-
 #Save the model
 model.save('/content/drive/MyDrive/Merged Instacart/models_final/DEC_SGD0.001_1e-07.h5')
 loaded_model = tf.keras.models.load_model('/content/drive/MyDrive/Merged Instacart/models_final/DEC_SGD0.001_1e-07.h5', custom_objects={'ClusteringLayer': ClusteringLayer})
