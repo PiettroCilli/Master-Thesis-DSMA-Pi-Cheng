@@ -1,3 +1,8 @@
+#Connect Google Drive to Colab environment, termed 'mount'
+from google.colab import drive
+drive.mount('/content/drive')
+
+#Import modules
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,27 +14,8 @@ from sklearn.manifold import TSNE
 import seaborn as sns
 
 #Import data
-data = pd.read_csv("C:/Users/Administrator/Documents/Msc Data Science & Marketing Analytics/Master thesis/Data sets/Merged Instacart/data_small_one-hot.csv")
-save_dir = './results'
+data = pd.read_csv('/content/drive/MyDrive/Merged Instacart/data_half_one-hot.csv')
 data = data.iloc[:, 5:]
-
-#Model architecture
-input_dim = data.shape[1]
-autoencoder = Sequential([
-    Dense(int(input_dim), activation='sigmoid', activity_regularizer=regularizers.l1(1e-5),
-          name='encoder'),
-    Dense(15, activation='sigmoid', activity_regularizer=regularizers.l1(1e-5), 
-          name='latent_layer'),
-    Dense(int(input_dim), activation='sigmoid', name = "decoder"),
-])
-
-#Load weights of this model
-autoencoder.load_weights(save_dir + '/ae_weights')
-autoencoder.build((None, input_dim))
-autoencoder.summary()
-
-#Get latent layer form encoder
-encoder = Model(inputs=autoencoder.input, outputs=autoencoder.get_layer('latent_layer').output)
 
 #Create the clustering layer
 class ClusteringLayer(Layer):
@@ -41,7 +27,7 @@ class ClusteringLayer(Layer):
         self.alpha = alpha
         self.initial_weights = weights
         self.input_spec = InputSpec(ndim=2)
-        
+
     def build(self, input_shape):
         assert len(input_shape) == 2
         input_dim = input_shape[1]
@@ -62,7 +48,7 @@ class ClusteringLayer(Layer):
     def compute_output_shape(self, input_shape):
         assert input_shape and len(input_shape) == 2
         return input_shape[0], self.n_clusters
-    
+
     def get_config(self):
         config = super().get_config()
         config.update({
@@ -77,15 +63,25 @@ def target_distribution(q):
     weight = q ** 2 / q.sum(0)
     return (weight.T / weight.sum(1)).T
 
-#1 Set up DEC model
-n_clusters = 3  # adjust as necessary
-clustering_layer = ClusteringLayer(n_clusters, name='clustering')(encoder.output)
-model = Model(inputs=encoder.input, outputs=clustering_layer)
+#Setting up neural network architecture, including specifying the amount of latent dimensions
+input_dim = data.shape[1]
+autoencoder = Sequential([
+    Dense(int(input_dim), activation='sigmoid', activity_regularizer=regularizers.l1(1e-6),
+          name='encoder'),
+    Dense(150, activation='sigmoid', activity_regularizer=regularizers.l1(1e-6),
+          name='latent_layer'),
+    Dense(int(input_dim), activation='sigmoid', name = "decoder"),
+])
+autoencoder.load_weights('/content/drive/MyDrive/Merged Instacart/models_final/ae_weights_1e-06')
+input_dim = data.shape[1]
+autoencoder.build((None, input_dim))
+autoencoder.summary()
+encoder = Model(inputs=autoencoder.input, outputs=autoencoder.get_layer('latent_layer').output)
 
-#2 Load weights of DEC model
-model.load_weights('./results/DEC_model_final.h5')
+#Load DEC model
+model = tf.keras.models.load_model('/content/drive/MyDrive/Merged Instacart/models_final/DEC_SGD0.0001.h5', custom_objects={'ClusteringLayer': ClusteringLayer})
 
-#3 Calculate predictions
+Calculate predictions
 q = model.predict(data, verbose=0)
 p = target_distribution(q)  # update the auxiliary target distribution p
 y_pred = q.argmax(1)
@@ -96,14 +92,15 @@ np.mean(p, axis = 0)
 ##Evaluate cluster quality with metrics
 data['cluster'] = y_pred
 
-#Silhouette
+encoded_data = encoder.predict(data)
+
+#Silhouette for latent space
+silhouette_encoded = silhouette_score(encoded_data, y_pred)
+print("The average silhouette_score is for the latent space is :", silhouette_encoded)
+
+#Silhouette for original space
 silhouette_avg = silhouette_score(data, y_pred)
 print("The average silhouette_score is :", silhouette_avg)
-
-#Davies bouldin
-db_score = davies_bouldin_score(data, y_pred)
-print("The Davies-Bouldin score is:", db_score)
-#data.to_csv("data_small_analysis.csv", index = False)
 
 ## Analyse bases in segmentation
 data1 = pd.read_csv("C:/Users/Administrator/Documents/Msc Data Science & Marketing Analytics/Master thesis/Data sets/Merged Instacart/data_small_one-hot.csv")
